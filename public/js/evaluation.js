@@ -60,10 +60,10 @@
  function showInvitation(url){$('inviteUrl').value=url;$('inviteDialog').showModal();}
  $('copyInvite').onclick=()=>busy($('copyInvite'),async()=>{try{await navigator.clipboard.writeText($('inviteUrl').value);notify('คัดลอกลิงก์แล้ว');}catch{$('inviteUrl').select();notify('กรุณาคัดลอกลิงก์จากช่องที่เลือก');}});
  $('inviteDialog').addEventListener('close',()=>{$('inviteUrl').value='';});
- $('logout').onclick=()=>busy($('logout'),async()=>{if(permissions.guest)await api('guest/logout','POST',{});else await fetch('/auth/logout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'}});location.replace('/evaluate.html');});
+ $('logout').onclick=()=>busy($('logout'),async()=>{if(permissions.guest)await api('guest/logout','POST',{});else await fetch('/auth/logout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'}});location.replace('/evaluate?signed_out=1');});
  $('refresh').onclick=()=>busy($('refresh'),refresh);
  async function init(){permissions=await api('permissions');$('loginPanel').hidden=!!permissions.access;$('app').hidden=!permissions.access;$('logout').hidden=!permissions.user&&!permissions.guest;$('identity').textContent=permissions.guest?permissions.guest.name:permissions.user?.full_name||'';
-  if(!permissions.access){if(permissions.user)notify('บัญชีนี้ไม่มีสิทธิ์เข้าระบบประเมิน ครูดูผลของตนเองได้ในฝ่ายบุคลากร',true);return;}
+  if(!permissions.access){if(permissions.user)notify('บัญชีนี้ไม่มีสิทธิ์เข้าระบบประเมิน ครูดูผลของตนเองได้ในฝ่ายบุคลากร',true);else if(!permissions.guest&&new URLSearchParams(location.search).get('signed_out')!=='1'){$('loginPanel').hidden=true;location.replace('/auth/start');}return;}
   $('message').hidden=true;$('newCase').hidden=!permissions.manage;$('criteriaTab').hidden=!!permissions.guest;$('templateEditor').hidden=!permissions.criteria;
   if(permissions.guest){$('identity').textContent+=' · ผู้ทรงคุณวุฒิภายนอก';const note=document.createElement('p');note.className='guest-note';note.textContent='เข้าถึงเฉพาะรายที่ได้รับมอบหมาย · สิทธิ์หมดอายุ '+new Date(permissions.guest.expires_at*1000).toLocaleString('th-TH');$('casesPanel').prepend(note);}else await loadTemplates();await refresh();
  }
