@@ -5,5 +5,8 @@
   "workers_dev": false,
   "assets": {"directory": "./public", "binding": "ASSETS", "run_worker_first": true},
   "routes": [{"pattern": "evaluate.banpadengschool.ac.th", "custom_domain": true}],
-  "d1_databases": [{"binding": "DB", "database_name": "banpadeng_school_db", "database_id": "870fa9ec-122f-4161-a1ca-cc9979dcfa30"}]
+  "d1_databases": [{"binding": "DB", "database_name": "banpadeng_school_db", "database_id": "870fa9ec-122f-4161-a1ca-cc9979dcfa30"}],
+  "previews": {
+    "d1_databases": [{"binding": "DB", "database_id": "1865e29a-a0f5-43d1-a026-78f6f6b88b7f"}]
+  }
 }
