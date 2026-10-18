@@ -2,7 +2,7 @@ import {evaluationPermissions} from './permissions.js';
 import {getCurrentUser,jsonResponse,parseCookies} from '../lib/auth.js';
 import {ensureEvaluationSchema} from './schema.js';
 import {starterTemplates} from './templates.js';
-import {EvaluationError,requireValue,validateRubric,validateScores,summarize} from './scoring.js';
+import {EvaluationError,requireValue,validateRubric,validateScores,summarize,ballotResult} from './scoring.js';
 export const EVALUATION_HOST='evaluate.banpadengschool.ac.th';
 const cookieName='__Host-bpd_evaluator',days7=604800;
 const response=(body,status=200,headers={})=>jsonResponse(body,status,{'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer',...headers});
@@ -71,7 +71,7 @@ export async function handleEvaluationRoute(request,env,pathname,method){
   if(pathname==='/api/evaluation/results'&&method==='GET'){
    requireValue(a.user?.role,'กรุณาเข้าสู่ระบบ',401);
    const all=a.permissions.access;
-   const rows=await env.DB.prepare(`SELECT c.id,c.personnel_id,p.full_name,c.title,c.fiscal_year,c.cycle,c.rank,c.published_at,c.result_json,t.kind,t.name AS template_name
+   const rows=await env.DB.prepare(`SELECT c.id,c.personnel_id,p.full_name,c.title,c.fiscal_year,c.cycle,c.rank,c.published_at,c.result_json,t.kind,t.name AS template_name,t.reference
    FROM evaluation_cases c JOIN personnel_records p ON p.id=c.personnel_id JOIN evaluation_templates t ON t.id=c.template_id
    WHERE c.state='published' ${all?'':`AND EXISTS (SELECT 1 FROM personnel_accounts x WHERE x.personnel_id=c.personnel_id AND x.user_id=?)`}
    ORDER BY c.fiscal_year DESC,c.published_at DESC,c.id DESC`).bind(...(all?[]:[a.user.id])).all();
@@ -103,7 +103,7 @@ export async function handleEvaluationRoute(request,env,pathname,method){
   }
   if(pathname==='/api/evaluation/cases'&&method==='GET'){
    const condition=a.permissions.manage?'1=1':a.guest?'EXISTS(SELECT 1 FROM evaluation_assignments a WHERE a.case_id=c.id AND a.id=?)':`EXISTS(SELECT 1 FROM evaluation_assignments a WHERE a.case_id=c.id AND a.user_id=?)`;
-   const rows=await env.DB.prepare(`SELECT c.id,c.title,c.fiscal_year,c.cycle,c.state,c.personnel_id,p.full_name,t.kind,t.name AS template_name,
+   const rows=await env.DB.prepare(`SELECT c.id,c.title,c.fiscal_year,c.cycle,c.state,c.personnel_id,p.full_name,t.kind,t.name AS template_name,t.reference,
    (SELECT COUNT(*) FROM evaluation_assignments x WHERE x.case_id=c.id) AS committee_count,
    (SELECT COUNT(*) FROM evaluation_assignments x JOIN evaluation_ballots b ON b.assignment_id=x.id WHERE x.case_id=c.id AND b.submitted_at IS NOT NULL) AS submitted_count
    FROM evaluation_cases c JOIN personnel_records p ON p.id=c.personnel_id JOIN evaluation_templates t ON t.id=c.template_id WHERE ${condition} ORDER BY c.created_at DESC,c.id DESC`)
@@ -127,7 +127,7 @@ export async function handleEvaluationRoute(request,env,pathname,method){
   requireValue(a.permissions.manage||mine,'ไม่ได้รับมอบหมายให้ประเมินรายนี้',403);
   if(!action&&method==='GET'){
    const summary=rows.length===JSON.parse(c.rubric_json).committee_size&&rows.every(b=>b.submitted_at)?summarize(JSON.parse(c.rubric_json),rows):null;
-   return response({case:{...safeCase(c),...(a.guest?{result:null}:{})},assignments:a.guest?rows.filter(r=>r.id===a.guest.id).map(r=>safeAssignment(r,true)):rows.map(r=>safeAssignment(r,a.permissions.manage||r.id===mine?.id)),mine:mine?safeAssignment(mine,true):null,summary:a.permissions.manage?summary:null,can_finalize:a.permissions.finalize&&!await owns(env,a.user,c.personnel_id)});
+   return response({case:{...safeCase(c),...(a.guest?{result:null}:{})},assignments:a.guest?rows.filter(r=>r.id===a.guest.id).map(r=>safeAssignment(r,true)):rows.map(r=>safeAssignment(r,a.permissions.manage||r.id===mine?.id)),mine:mine?safeAssignment(mine,true):null,own_result:mine?.submitted_at?ballotResult(JSON.parse(c.rubric_json),JSON.parse(mine.scores_json)):null,summary:a.permissions.manage?summary:null,can_finalize:a.permissions.finalize&&!await owns(env,a.user,c.personnel_id)});
   }
   if(action==='events'&&method==='GET'){
    requireManage(a);const events=await env.DB.prepare(`SELECT e.id,e.action,e.detail_json,e.created_at,COALESCE(u.full_name,x.guest_name) AS actor FROM evaluation_events e LEFT JOIN users u ON u.id=e.actor_user_id LEFT JOIN evaluation_assignments x ON x.id=e.actor_assignment_id WHERE e.case_id=? ORDER BY e.id`).bind(id).all();return response({events:events.results});

@@ -122,3 +122,32 @@ test('the independent Worker never accepts the school session cookie and does no
  assert.equal((await worker.fetch(new Request(origin+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}),env,{})).status,404);
  const health=await(await worker.fetch(new Request(origin+'/api/health'),env,{})).json();assert.equal(health.app,'evaluatesystem');assert.equal(health.protocol,'evaluation-link-v1');
 });
+
+test('each evaluator gets only their own submitted summary before publication, including external guests',async()=>{
+ const env=await fixture(),{id,invitation}=await createCase(env,true);
+ await call(env,`cases/${id}/open`,'POST',{});await submit(env,id,3);
+ const own=await(await call(env,'cases/'+id,'GET',undefined,3)).json();
+ assert.equal(own.own_result.passed,true);assert(own.own_result.percent>70);assert.equal(own.summary,null);assert.equal(own.case.result,null);
+ const token=new URLSearchParams(new URL(invitation.invitation_url).hash.slice(1)).get('invite');
+ const redeemed=await call(env,'guest/session','POST',{token},null),cookie=redeemed.headers.get('set-cookie').split(';')[0];
+ const before=await(await guest(env,'cases/'+id,cookie)).json();assert.equal(before.own_result,null);
+ const scores=Object.fromEntries(before.case.rubric.items.map(item=>[item.id,item.max]));
+ assert.equal((await guest(env,`cases/${id}/ballot`,cookie,'PUT',{scores,revision:0,submit:true})).status,200);
+ const after=await(await guest(env,'cases/'+id,cookie)).json();assert.equal(after.own_result.percent,100);assert.equal(after.summary,null);assert.equal(after.case.result,null);assert.equal(after.assignments.length,1);
+});
+
+test('assistant checklist summaries honor section thresholds and become visible to the teacher only after publication',async()=>{
+ const env=await fixture();
+ const rubric={mode:'checklist',threshold:0,committee_size:3,items:[{id:'p.1',label:'เกณฑ์วิชาชีพสำหรับทดสอบ',section:'วิชาชีพ',min:0,max:1},{id:'b.1',label:'เกณฑ์พฤติกรรมสำหรับทดสอบ',section:'คุณลักษณะ',min:0,max:1}],groups:[{section:'วิชาชีพ',required:1},{section:'คุณลักษณะ',required:1}]};
+ const template=await(await call(env,'templates','POST',{name:'ครูผู้ช่วย — แบบทดสอบ',kind:'assistant',reference:'fixture only',rubric,verified:true,confirm_reference:true})).json();
+ const person=env.raw.prepare('SELECT personnel_id FROM personnel_accounts WHERE user_id=2').get().personnel_id;
+ const created=await call(env,'cases','POST',{template_id:template.id,personnel_id:person,title:'ครูผู้ช่วยทดสอบ',fiscal_year:2570,cycle:1,start_date:'2026-10-01',end_date:'2027-03-31'});assert.equal(created.status,201);const id=(await created.json()).id;
+ for(const user of [3,5,4])await call(env,`cases/${id}/assignments`,'POST',{user_id:user});
+ await call(env,`cases/${id}/open`,'POST',{});
+ for(const user of [3,5,4]){const r=await call(env,`cases/${id}/ballot`,'PUT',{scores:{'p.1':1,'b.1':user===3?0:1},revision:0,submit:true},user);assert.equal(r.status,200);}
+ const detail=await(await call(env,'cases/'+id,'GET',undefined,3)).json();assert.equal(detail.own_result.passed,false);assert.equal(detail.own_result.groups[1].passed,0);
+ assert.equal((await(await call(env,'results','GET',undefined,2)).json()).results.length,0);
+ const published=await call(env,`cases/${id}/publish`,'POST',{},4);assert.equal(published.status,200);assert.equal((await published.json()).result.passed,false);
+ const results=(await(await call(env,'results','GET',undefined,2)).json()).results;assert.equal(results.length,1);assert.equal(results[0].kind,'assistant');assert.equal(results[0].result.members.length,3);
+ assert.equal((await(await call(env,'results','GET',undefined,6)).json()).results.length,0);
+});
