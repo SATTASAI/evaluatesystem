@@ -6,6 +6,7 @@ import worker from '../src/index.js';
 import {ensureEvaluationSessions,tokenHash,randomToken,SESSION_COOKIE} from '../src/evaluation/session-link.js';
 import {validateRubric,validateScores,summarize} from '../src/evaluation/scoring.js';
 import {starterTemplates} from '../src/evaluation/templates.js';
+import {eligibleForEvaluation} from '../src/evaluation/eligibility.js';
 const origin='https://evaluate.banpadengschool.ac.th';
 async function fixture(){
  const raw=new DatabaseSync(':memory:');raw.exec(`CREATE TABLE users(id INTEGER PRIMARY KEY,email TEXT,password_hash TEXT,password_salt TEXT,full_name TEXT,role TEXT,status TEXT DEFAULT 'active',session_version INTEGER DEFAULT 1);
@@ -43,6 +44,37 @@ test('permissions follow current roles and department heads; only personnel head
  assert.equal((await call(env,'templates','POST',starterTemplates[0],3)).status,201);
  env.raw.exec("UPDATE department_staff SET is_head=0 WHERE department='academic'");assert.equal((await call(env,'cases','GET',undefined,5)).status,403);
  assert.equal((await call(env,'cases','GET',undefined,null)).status,401);
+});
+test('live school personnel roster separates PA teachers from assistant teachers by academic rank',async()=>{
+ const env=await fixture();
+ env.raw.exec(`UPDATE personnel_records SET position='ผู้อำนวยการ',academic_rank=NULL WHERE id=4;
+ UPDATE personnel_records SET academic_rank='ชำนาญการพิเศษ' WHERE id=3;
+ UPDATE personnel_records SET academic_rank='ค.ศ. 1' WHERE id=5;
+ UPDATE personnel_records SET academic_rank='ชำนาญการ' WHERE id=6;
+ INSERT INTO personnel_records(id,full_name,position,academic_rank) VALUES
+ (7,'ครูผู้ช่วย','ครูผู้ช่วย',NULL),
+ (8,'ครูไม่ทราบวิทยฐานะ','ครู','ระดับอื่น'),
+ (9,'ธุรการ','เจ้าหน้าที่ธุรการ',NULL),
+ (10,'ครูเชี่ยวชาญ','ครูเชี่ยวชาญ',NULL);`);
+ const pa=await(await call(env,'people?kind=pa')).json();
+ assert.deepEqual(new Set(pa.people.map(p=>p.id)),new Set([1,2,3,5,6,7,8,10]));
+ const assistant=await(await call(env,'people?kind=assistant')).json();
+ assert.deepEqual(new Set(assistant.people.map(p=>p.id)),new Set([1,2,5,7]));
+ assert.equal((await call(env,'people')).status,400);
+ assert.equal(eligibleForEvaluation({position:'ครู',academic_rank:'ครูชำนาญการ'},'assistant'),false);
+ const created=await call(env,'templates','POST',{...starterTemplates[0],verified:true,confirm_reference:true});
+ const paTemplate=(await created.json()).id;
+ const assistantRubric=structuredClone(starterTemplates[1].rubric);
+ assistantRubric.items.forEach(item=>item.label='ทดสอบ '+item.id);
+ const assistantResponse=await call(env,'templates','POST',{...starterTemplates[1],rubric:assistantRubric,verified:true,confirm_reference:true});
+ assert.equal(assistantResponse.status,201);
+ const assistantTemplate=(await assistantResponse.json()).id;
+ const payload={title:'รอบทดสอบ',fiscal_year:2570,cycle:1,start_date:'2026-10-01',end_date:'2027-09-30'};
+ assert.equal((await call(env,'cases','POST',{...payload,personnel_id:4,template_id:paTemplate})).status,400);
+ assert.equal((await call(env,'cases','POST',{...payload,personnel_id:3,template_id:assistantTemplate})).status,400);
+ assert.equal((await call(env,'cases','POST',{...payload,personnel_id:7,template_id:assistantTemplate})).status,201);
+ env.raw.exec("UPDATE personnel_records SET academic_rank='ชำนาญการ' WHERE id=7");
+ assert.equal((await call(env,'cases','POST',{...payload,personnel_id:7,template_id:assistantTemplate})).status,400);
 });
 test('PA requires every member to pass; ballots freeze after submission, finalization is executive-only and results are private',async()=>{
  const env=await fixture(),{id}=await createCase(env);

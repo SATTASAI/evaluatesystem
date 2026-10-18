@@ -2,6 +2,7 @@ import {evaluationPermissions} from './permissions.js';
 import {getCurrentUser,jsonResponse,parseCookies} from '../lib/auth.js';
 import {ensureEvaluationSchema} from './schema.js';
 import {starterTemplates} from './templates.js';
+import {eligibleForEvaluation} from './eligibility.js';
 import {EvaluationError,requireValue,validateRubric,validateScores,summarize,ballotResult} from './scoring.js';
 export const EVALUATION_HOST='evaluate.banpadengschool.ac.th';
 const cookieName='__Host-bpd_evaluator',days7=604800;
@@ -94,12 +95,14 @@ export async function handleEvaluationRoute(request,env,pathname,method){
   }
   if(pathname==='/api/evaluation/people'&&method==='GET'){
    requireManage(a);
+   const kind=new URL(request.url).searchParams.get('kind');
+   requireValue(['pa','assistant'].includes(kind),'ต้องระบุประเภทประเมิน PA หรือครูผู้ช่วย');
    const people=await env.DB.prepare("SELECT id,full_name,position,academic_rank FROM personnel_records WHERE status='active' ORDER BY full_name").all();
    const candidates=await env.DB.prepare("SELECT id,full_name,role FROM users WHERE status='active' AND role IS NOT NULL ORDER BY full_name").all();
    // Eligibility is enforced again at assignment time. Current department heads are included.
    const heads=await env.DB.prepare(`SELECT DISTINCT x.user_id FROM department_staff d JOIN personnel_records p ON p.id=d.personnel_id AND p.status='active' JOIN personnel_accounts x ON x.personnel_id=p.id WHERE d.is_head=1`).all();
    const ids=new Set(heads.results.map(x=>x.user_id));
-   return response({people:people.results,evaluators:candidates.results.filter(u=>['superadmin','executive'].includes(u.role)||ids.has(u.id))});
+   return response({people:people.results.filter(p=>eligibleForEvaluation(p,kind)),evaluators:candidates.results.filter(u=>['superadmin','executive'].includes(u.role)||ids.has(u.id))});
   }
   if(pathname==='/api/evaluation/cases'&&method==='GET'){
    const condition=a.permissions.manage?'1=1':a.guest?'EXISTS(SELECT 1 FROM evaluation_assignments a WHERE a.case_id=c.id AND a.id=?)':`EXISTS(SELECT 1 FROM evaluation_assignments a WHERE a.case_id=c.id AND a.user_id=?)`;
@@ -111,8 +114,10 @@ export async function handleEvaluationRoute(request,env,pathname,method){
   }
   if(pathname==='/api/evaluation/cases'&&method==='POST'){
    requireManage(a);const b=await input(request),personId=idOf(b.personnel_id),templateId=idOf(b.template_id);
-   const person=await env.DB.prepare("SELECT id FROM personnel_records WHERE id=? AND status='active'").bind(personId).first();requireValue(person,'ไม่พบบุคลากร',404);
    const template=await env.DB.prepare('SELECT * FROM evaluation_templates WHERE id=?').bind(templateId).first();requireValue(template?.verified,'ต้องเลือกเกณฑ์ที่ตรวจสอบและยืนยันแล้ว');
+   const person=await env.DB.prepare("SELECT id,position,academic_rank FROM personnel_records WHERE id=? AND status='active'").bind(personId).first();
+   requireValue(person,'ไม่พบบุคลากร',404);
+   requireValue(eligibleForEvaluation(person,template.kind),'ครูรายนี้ไม่เข้าเกณฑ์ตามประเภทการประเมินหรือวิทยฐานะปัจจุบัน',400);
    requireValue(clean(b.title)&&Number.isInteger(b.fiscal_year)&&b.fiscal_year>=2500&&b.fiscal_year<=2800,'ชื่อรอบหรือปีงบประมาณไม่ถูกต้อง');
    requireValue(Number.isInteger(b.cycle)&&b.cycle>=1&&b.cycle<=4,'ครั้งที่ประเมินไม่ถูกต้อง');
    requireValue(date(b.start_date)&&date(b.end_date)&&b.start_date<=b.end_date,'ช่วงวันที่ประเมินไม่ถูกต้อง');
