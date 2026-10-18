@@ -5,7 +5,7 @@
 <main>
  <div id="message" role="status" aria-live="polite" hidden></div>
  <section id="loginPanel" class="login-card" hidden><span class="eyebrow">PERFORMANCE EVALUATION</span><h1>เข้าสู่ระบบประเมิน</h1><p>ใช้บัญชีจากระบบโรงเรียน สำหรับผู้บริหาร หัวหน้าฝ่าย และผู้ดูแลระบบ<br>ผู้ทรงคุณวุฒิภายนอกใช้ลิงก์เชิญที่ได้รับ</p><a class="login-button" href="/auth/start">เข้าสู่ระบบด้วยบัญชีโรงเรียน</a><a href="https://system.banpadengschool.ac.th/">กลับระบบโรงเรียน</a></section>
- <section id="app" hidden>
+ <section id="app">
   <div class="page-title"><div><span class="eyebrow">EVALUATION CENTER</span><h1>ประเมินผลการปฏิบัติงาน</h1><p>พัฒนาครูอย่างต่อเนื่อง ด้วยการประเมินที่ตรวจสอบได้</p></div><div class="actions"><button id="refresh" class="ghost">รีเฟรช</button><button id="newCase" hidden>+ สร้างรอบประเมิน</button></div></div>
   <nav class="tabs" aria-label="ระบบประเมิน"><button data-tab="cases" class="active">รอบประเมิน</button><button data-tab="criteria" id="criteriaTab" hidden>เกณฑ์การประเมิน</button></nav>
   <section id="casesPanel"><div class="metrics" id="metrics"></div><div class="filters"><label>ค้นหาครูหรือรอบประเมิน<input id="search" type="search" placeholder="พิมพ์ชื่อครู หรือชื่อรอบ…"></label><label>ประเภท<select id="kindFilter"><option value="">ทุกประเภท</option><option value="pa">PA</option><option value="assistant">ครูผู้ช่วย</option></select></label><label>สถานะ<select id="stateFilter"><option value="">ทุกสถานะ</option><option value="draft">เตรียมรอบ</option><option value="open">กำลังประเมิน</option><option value="published">ยืนยันผลแล้ว</option></select></label></div><div id="caseList" class="case-grid"></div></section>

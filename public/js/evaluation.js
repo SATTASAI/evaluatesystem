@@ -60,10 +60,11 @@
  function showInvitation(url){$('inviteUrl').value=url;$('inviteDialog').showModal();}
  $('copyInvite').onclick=()=>busy($('copyInvite'),async()=>{try{await navigator.clipboard.writeText($('inviteUrl').value);notify('คัดลอกลิงก์แล้ว');}catch{$('inviteUrl').select();notify('กรุณาคัดลอกลิงก์จากช่องที่เลือก');}});
  $('inviteDialog').addEventListener('close',()=>{$('inviteUrl').value='';});
- $('logout').onclick=()=>busy($('logout'),async()=>{if(permissions.guest)await api('guest/logout','POST',{});else await fetch('/auth/logout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'}});location.replace('/evaluate?signed_out=1');});
+ $('logout').onclick=()=>busy($('logout'),async()=>{if(permissions.guest)await api('guest/logout','POST',{});else await fetch('/auth/logout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'}});location.replace('/evaluate');});
  $('refresh').onclick=()=>busy($('refresh'),refresh);
- async function init(){permissions=await api('permissions');$('loginPanel').hidden=!!permissions.access;$('app').hidden=!permissions.access;$('logout').hidden=!permissions.user&&!permissions.guest;$('identity').textContent=permissions.guest?permissions.guest.name:permissions.user?.full_name||'';
-  if(!permissions.access){if(permissions.user)notify('บัญชีนี้ไม่มีสิทธิ์เข้าระบบประเมิน ครูดูผลของตนเองได้ในฝ่ายบุคลากร',true);else if(!permissions.guest&&new URLSearchParams(location.search).get('signed_out')!=='1'){$('loginPanel').hidden=true;location.replace('/auth/start');}return;}
+ async function init(){permissions=await api('permissions');$('loginPanel').hidden=true;$('app').hidden=false;$('logout').hidden=!permissions.user&&!permissions.guest;$('identity').textContent=permissions.guest?permissions.guest.name:permissions.user?.full_name||'';
+  $('metrics').hidden=!permissions.access;['search','kindFilter','stateFilter','refresh'].forEach(id=>$(id).disabled=!permissions.access);
+  if(!permissions.access){$('newCase').hidden=true;$('criteriaTab').hidden=true;$('templateEditor').hidden=true;$('caseList').innerHTML=permissions.user?'<div class="empty">บัญชีนี้ไม่มีสิทธิ์เข้าระบบประเมิน ครูดูผลของตนเองได้ในฝ่ายบุคลากร</div>':'<div class="empty"><p>เข้าสู่ระบบโรงเรียนเพื่อดูรอบประเมินที่ได้รับมอบหมายและบันทึกคะแนน</p><a href="/auth/start">เข้าสู่ระบบโรงเรียน</a></div>';return;}
   $('message').hidden=true;$('newCase').hidden=!permissions.manage;$('criteriaTab').hidden=!!permissions.guest;$('templateEditor').hidden=!permissions.criteria;
   if(permissions.guest){$('identity').textContent+=' · ผู้ทรงคุณวุฒิภายนอก';const note=document.createElement('p');note.className='guest-note';note.textContent='เข้าถึงเฉพาะรายที่ได้รับมอบหมาย · สิทธิ์หมดอายุ '+new Date(permissions.guest.expires_at*1000).toLocaleString('th-TH');$('casesPanel').prepend(note);}else await loadTemplates();await refresh();
  }

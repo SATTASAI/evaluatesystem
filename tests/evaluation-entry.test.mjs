@@ -24,12 +24,16 @@ async function openPage(permissions,{search='',hash='',inviteError=false}={}){
  return {element,requests,redirects};
 }
 
-test('opening evaluate without a session starts school sign-in automatically',async()=>{
+test('opening evaluate without a session stays on the evaluation page',async()=>{
  const page=await openPage({access:false,user:null,guest:null});
- assert.deepEqual(page.redirects,['/auth/start']);
+ assert.deepEqual(page.redirects,[]);
  assert.equal(page.element('loginPanel').hidden,true);
- assert.equal(page.element('app').hidden,true);
+ assert.equal(page.element('app').hidden,false);
  assert.equal(page.requests.length,1);
+ assert.equal(page.element('newCase').hidden,true);
+ assert.equal(page.element('refresh').disabled,true);
+ assert.equal(page.element('metrics').hidden,true);
+ assert.match(page.element('caseList').innerHTML,/href="\/auth\/start"/);
 });
 
 test('an existing authorized session opens the evaluation list directly',async()=>{
@@ -43,19 +47,20 @@ test('an existing authorized session opens the evaluation list directly',async()
 test('an authenticated account without access gets a denial without a sign-in loop',async()=>{
  const page=await openPage({access:false,user:{full_name:'ครู'},guest:null});
  assert.deepEqual(page.redirects,[]);
- assert.match(page.element('message').textContent,/ไม่มีสิทธิ์/);
- assert.equal(page.element('app').hidden,true);
+ assert.match(page.element('caseList').innerHTML,/ไม่มีสิทธิ์/);
+ assert.equal(page.element('app').hidden,false);
  assert.equal(page.requests.length,1);
 });
 
-test('signing out returns to a page that waits for an explicit sign-in',async()=>{
+test('signing out returns to the evaluation page without automatic sign-in',async()=>{
  const page=await openPage({access:true,user:{full_name:'ผู้บริหาร'},guest:null});
  await page.element('logout').onclick();
- assert.deepEqual(page.redirects,['/evaluate?signed_out=1']);
+ assert.deepEqual(page.redirects,['/evaluate']);
  assert.ok(page.requests.some(r=>r.url==='/auth/logout'&&r.method==='POST'));
- const signedOut=await openPage({access:false,user:null,guest:null},{search:'?signed_out=1'});
+ const signedOut=await openPage({access:false,user:null,guest:null},{});
  assert.deepEqual(signedOut.redirects,[]);
- assert.equal(signedOut.element('loginPanel').hidden,false);
+ assert.equal(signedOut.element('loginPanel').hidden,true);
+ assert.equal(signedOut.element('app').hidden,false);
 });
 
 test('an invited external evaluator opens assigned cases without school sign-in',async()=>{
