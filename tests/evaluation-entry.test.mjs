@@ -14,6 +14,7 @@ async function openPage(permissions,{search='',hash='',inviteError=false,cases=[
   if(url.endsWith('/guest/session')&&inviteError)return Response.json({error:'ลิงก์เชิญหมดอายุ'},{status:401});
   if(url.endsWith('/permissions'))return Response.json(permissions);
   if(url.endsWith('/templates'))return Response.json({templates:[],starters:[]});
+  if(url.endsWith('/people?kind=pa'))return Response.json({people:[{id:2,full_name:'ครูเป้าหมาย',position:'ครู',academic_rank:'ค.ศ. 1'}],evaluators:[]});
   if(url.endsWith('/cases'))return Response.json({cases});
   return Response.json({ok:true});
  };
@@ -42,6 +43,8 @@ test('an existing authorized session opens the evaluation list directly',async()
  assert.equal(page.element('app').hidden,false);
  assert.equal(page.element('loginPanel').hidden,true);
  assert.ok(page.requests.some(r=>r.url.endsWith('/cases')));
+ assert.ok(page.requests.some(r=>r.url.endsWith('/people?kind=pa')));
+ assert.match(page.element('rosterList').innerHTML,/ครูเป้าหมาย/);
 });
 
 test('an authenticated account without access gets a denial without a sign-in loop',async()=>{
