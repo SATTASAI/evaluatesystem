@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
 
 const script=readFileSync(new URL('../public/js/evaluation.js',import.meta.url),'utf8');
-async function openPage(permissions,{search='',hash='',inviteError=false}={}){
+async function openPage(permissions,{search='',hash='',inviteError=false,cases=[]}={}){
  const elements=new Map(),requests=[],redirects=[],errors=[];
  const element=id=>{if(!elements.has(id))elements.set(id,{hidden:true,textContent:'',className:'',innerHTML:'',value:'',disabled:false,addEventListener(){},prepend(){},querySelectorAll(){return [];}});return elements.get(id);};
  const location={pathname:'/evaluate',search,hash,replace:url=>redirects.push(url)};
@@ -14,7 +14,7 @@ async function openPage(permissions,{search='',hash='',inviteError=false}={}){
   if(url.endsWith('/guest/session')&&inviteError)return Response.json({error:'ลิงก์เชิญหมดอายุ'},{status:401});
   if(url.endsWith('/permissions'))return Response.json(permissions);
   if(url.endsWith('/templates'))return Response.json({templates:[],starters:[]});
-  if(url.endsWith('/cases'))return Response.json({cases:[]});
+  if(url.endsWith('/cases'))return Response.json({cases});
   return Response.json({ok:true});
  };
  runInNewContext(script,{document,location,fetch,URLSearchParams,history:{replaceState(){}},console:{error:e=>errors.push(e)}});
@@ -77,4 +77,10 @@ test('an invalid invitation shows its error without redirecting to school sign-i
  assert.deepEqual(page.redirects,[]);
  assert.match(page.element('message').textContent,/ลิงก์เชิญหมดอายุ/);
  assert.equal(page.requests.length,1);
+});
+
+
+test('an external evaluator assigned only assistant cases starts on the assistant page',async()=>{
+ const page=await openPage({access:true,user:null,guest:{name:'กรรมการ',expires_at:2000000000}},{cases:[{id:2,kind:'assistant',full_name:'ครูผู้ช่วยทดสอบ',title:'รอบทดสอบ',fiscal_year:2570,cycle:1,state:'open',committee_count:3,submitted_count:0}]});
+ assert.deepEqual(page.redirects,[]);assert.match(page.element('pageHeading').textContent,/ครูผู้ช่วย/);assert.match(page.element('caseList').innerHTML,/ครูผู้ช่วยทดสอบ/);assert.equal(page.element('resultsMenu').hidden,true);
 });
