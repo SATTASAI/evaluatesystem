@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 
 import worker from '../src/index.js';
 import {ensureEvaluationSessions,tokenHash,randomToken,SESSION_COOKIE} from '../src/evaluation/session-link.js';
-import {validateRubric,validateScores,summarize} from '../src/evaluation/scoring.js';
+import {validateRubric,validateScores,summarize,ballotResult} from '../src/evaluation/scoring.js';
 import {starterTemplates} from '../src/evaluation/templates.js';
 import {eligibleForEvaluation} from '../src/evaluation/eligibility.js';
 const origin='https://evaluate.banpadengschool.ac.th';
@@ -35,7 +35,7 @@ async function createCase(env,external=false){
  let invitation;if(external){const r=await call(env,`cases/${id}/assignments`,'POST',{guest_name:'ผู้ทรงคุณวุฒิ',guest_org:'ภายนอก'});assert.equal(r.status,201);invitation=await r.json();}
  return {id,person,invitation,templateId};
 }
-async function submit(env,id,user,fill=.8){const d=await(await call(env,'cases/'+id,'GET',undefined,user)).json();const scores=Object.fromEntries(d.case.rubric.items.map(i=>[i.id,Math.max(i.min,i.max*fill)]));const r=await call(env,`cases/${id}/ballot`,'PUT',{scores,revision:d.mine.revision,submit:true},user);assert.equal(r.status,200,await r.clone().text());return scores;}
+async function submit(env,id,user,fill=.8){const d=await(await call(env,'cases/'+id,'GET',undefined,user)).json();const scores=Object.fromEntries(d.case.rubric.items.map(i=>[i.id,Math.max(i.min,i.max*fill)]));const r=await call(env,`cases/${id}/ballot`,'PUT',{scores,extras:{workload:'met'},revision:d.mine.revision,submit:true},user);assert.equal(r.status,200,await r.clone().text());return scores;}
 
 test('permissions follow current roles and department heads; only personnel head/admin edit criteria',async()=>{
  const env=await fixture();for(const user of [1,3,4,5])assert.equal((await(await call(env,'permissions','GET',undefined,user)).json()).access,true);
@@ -64,9 +64,9 @@ test('live school personnel roster separates PA teachers from assistant teachers
  assert.equal(eligibleForEvaluation({position:'ครู',academic_rank:'ครูชำนาญการ'},'assistant'),false);
  const created=await call(env,'templates','POST',{...starterTemplates[0],verified:true,confirm_reference:true});
  const paTemplate=(await created.json()).id;
- const assistantRubric=structuredClone(starterTemplates[1].rubric);
+ const assistantRubric=structuredClone(starterTemplates.find(t=>t.kind==='assistant').rubric);
  assistantRubric.items.forEach(item=>item.label='ทดสอบ '+item.id);
- const assistantResponse=await call(env,'templates','POST',{...starterTemplates[1],rubric:assistantRubric,verified:true,confirm_reference:true});
+ const assistantResponse=await call(env,'templates','POST',{...starterTemplates.find(t=>t.kind==='assistant'),rubric:assistantRubric,verified:true,confirm_reference:true});
  assert.equal(assistantResponse.status,201);
  const assistantTemplate=(await assistantResponse.json()).id;
  const payload={title:'รอบทดสอบ',fiscal_year:2570,cycle:1,start_date:'2026-10-01',end_date:'2027-09-30'};
@@ -99,7 +99,7 @@ test('guest invitation is one-time, expires in 7 days, is scoped to one case, an
  const other=await createCase(env);assert.equal((await guest(env,'cases/'+other.id,cookie)).status,403);
  const own=await(await guest(env,'cases/'+id,cookie)).json();assert.equal(own.assignments.length,1);assert.equal(own.summary,null);assert.equal(own.mine.name,'ผู้ทรงคุณวุฒิ');
  assert.equal((await call(env,`cases/${id}/open`,'POST',{})).status,200);
- const scores=Object.fromEntries(own.case.rubric.items.map(i=>[i.id,i.max]));assert.equal((await guest(env,`cases/${id}/ballot`,cookie,'PUT',{scores,revision:0,submit:true})).status,200);
+ const scores=Object.fromEntries(own.case.rubric.items.map(i=>[i.id,i.max]));assert.equal((await guest(env,`cases/${id}/ballot`,cookie,'PUT',{scores,extras:{workload:'met'},revision:0,submit:true})).status,200);
  assert.equal((await call(env,`cases/${id}/revoke`,'POST',{assignment_id:invitation.id,reason:'ครบหน้าที่'})).status,200);assert.equal((await guest(env,'cases',cookie)).status,401);
  const renewed=await call(env,`cases/${id}/renew`,'POST',{assignment_id:invitation.id,reason:'เชิญใหม่'});assert.equal(renewed.status,200);const replacement=(await renewed.json()).invitation_url;const token2=new URLSearchParams(new URL(replacement).hash.slice(1)).get('invite');
  env.raw.prepare('UPDATE evaluation_assignments SET expires_at=? WHERE id=?').run(Math.floor(Date.now()/1000)-1,invitation.id);assert.equal((await call(env,'guest/session','POST',{token:token2},null)).status,401);
@@ -115,7 +115,7 @@ test('criteria versions cannot retroactively change a case; invalid dates, self 
  const copy=structuredClone(starterTemplates[0]);copy.rubric.threshold=90;assert.equal((await call(env,'templates','POST',{...copy,verified:true,confirm_reference:true},3)).status,201);
  const detail=await(await call(env,'cases/'+id)).json();assert.equal(detail.case.rubric.threshold,70);assert.equal(detail.case.template_id,templateId);
  const malformed=await call(env,'cases','POST',{personnel_id:person,template_id:templateId,title:'x',fiscal_year:2570,cycle:1,start_date:'2026-02-30',end_date:'2026-03-31'});assert.equal(malformed.status,400);
- await call(env,`cases/${id}/open`,'POST',{});const scores={'1.1':3};assert.equal((await call(env,`cases/${id}/ballot`,'PUT',{scores,revision:0},3)).status,200);assert.equal((await call(env,`cases/${id}/ballot`,'PUT',{scores,revision:0},3)).status,409);
+ await call(env,`cases/${id}/open`,'POST',{});const scores={'1.1':3};assert.equal((await call(env,`cases/${id}/ballot`,'PUT',{scores,extras:{workload:'met'},revision:0},3)).status,200);assert.equal((await call(env,`cases/${id}/ballot`,'PUT',{scores,extras:{workload:'met'},revision:0},3)).status,409);
  assert.equal((await call(env,`cases/${id}/publish`,'POST',{},4)).status,409);
  const ownId=env.raw.prepare('SELECT personnel_id FROM personnel_accounts WHERE user_id=4').get().personnel_id;env.raw.prepare('UPDATE evaluation_cases SET personnel_id=? WHERE id=?').run(ownId,id);
  assert.equal((await call(env,`cases/${id}/ballot`,'PUT',{scores:{},revision:0},4)).status,403);assert.equal((await call(env,`cases/${id}/publish`,'POST',{},4)).status,403);
@@ -124,7 +124,7 @@ test('checklist evaluates required count per section, finite scores, complete ba
  const rubric={mode:'checklist',threshold:0,committee_size:2,items:[{id:'p.1',section:'วิชาชีพ',label:'ก',min:0,max:1},{id:'p.2',section:'วิชาชีพ',label:'ข',min:0,max:1},{id:'s.1',section:'สังคม',label:'ค',min:0,max:1}],groups:[{section:'วิชาชีพ',required:1},{section:'สังคม',required:1}]};validateRubric(rubric);
  const ballots=[{id:1,name:'ก',submitted_at:'now',scores_json:JSON.stringify({'p.1':1,'p.2':1,'s.1':0})},{id:2,name:'ข',submitted_at:'now',scores_json:JSON.stringify({'p.1':1,'p.2':1,'s.1':1})}];assert.equal(summarize(rubric,ballots).passed,false);
  assert.throws(()=>validateScores(rubric,{'p.1':.5}));assert.throws(()=>validateScores(starterTemplates[0].rubric,{'1.1':NaN}));assert.throws(()=>validateScores(starterTemplates[0].rubric,{'1.1':'3'}));assert.throws(()=>validateScores(starterTemplates[0].rubric,{'bogus':1}));
- const env=await fixture();const r=await call(env,'templates','POST',{...starterTemplates[1],verified:true,confirm_reference:true});assert.equal(r.status,400);
+ const env=await fixture();const r=await call(env,'templates','POST',{...starterTemplates.find(t=>t.kind==='assistant'),verified:true,confirm_reference:true});assert.equal(r.status,400);
 });
 
 test('linked aliases cannot act as two committee members; expiry invalidates an already redeemed guest session',async()=>{
@@ -144,7 +144,7 @@ test('a guest cannot see other committee scores even after the executive publish
  const env=await fixture(),{id,invitation}=await createCase(env,true);
  const token=new URLSearchParams(new URL(invitation.invitation_url).hash.slice(1)).get('invite');const redeemed=await call(env,'guest/session','POST',{token},null);const cookie=redeemed.headers.get('set-cookie').split(';')[0];
  await call(env,`cases/${id}/open`,'POST',{});await submit(env,id,3);await submit(env,id,5);
- const d=await(await guest(env,'cases/'+id,cookie)).json();const scores=Object.fromEntries(d.case.rubric.items.map(i=>[i.id,i.max]));await guest(env,`cases/${id}/ballot`,cookie,'PUT',{scores,revision:0,submit:true});
+ const d=await(await guest(env,'cases/'+id,cookie)).json();const scores=Object.fromEntries(d.case.rubric.items.map(i=>[i.id,i.max]));await guest(env,`cases/${id}/ballot`,cookie,'PUT',{scores,extras:{workload:'met'},revision:0,submit:true});
  assert.equal((await call(env,`cases/${id}/publish`,'POST',{},4)).status,200);
  const after=await(await guest(env,'cases/'+id,cookie)).json();assert.equal(after.case.result,null);assert.equal(after.summary,null);assert.equal(after.assignments.length,1);assert.equal(after.mine.name,'ผู้ทรงคุณวุฒิ');
 });
@@ -164,7 +164,7 @@ test('each evaluator gets only their own submitted summary before publication, i
  const redeemed=await call(env,'guest/session','POST',{token},null),cookie=redeemed.headers.get('set-cookie').split(';')[0];
  const before=await(await guest(env,'cases/'+id,cookie)).json();assert.equal(before.own_result,null);
  const scores=Object.fromEntries(before.case.rubric.items.map(item=>[item.id,item.max]));
- assert.equal((await guest(env,`cases/${id}/ballot`,cookie,'PUT',{scores,revision:0,submit:true})).status,200);
+ assert.equal((await guest(env,`cases/${id}/ballot`,cookie,'PUT',{scores,extras:{workload:'met'},revision:0,submit:true})).status,200);
  const after=await(await guest(env,'cases/'+id,cookie)).json();assert.equal(after.own_result.percent,100);assert.equal(after.summary,null);assert.equal(after.case.result,null);assert.equal(after.assignments.length,1);
 });
 
@@ -182,4 +182,27 @@ test('assistant checklist summaries honor section thresholds and become visible 
  const published=await call(env,`cases/${id}/publish`,'POST',{},4);assert.equal(published.status,200);assert.equal((await published.json()).result.passed,false);
  const results=(await(await call(env,'results','GET',undefined,2)).json()).results;assert.equal(results.length,1);assert.equal(results[0].kind,'assistant');assert.equal(results[0].result.members.length,3);
  assert.equal((await(await call(env,'results','GET',undefined,6)).json()).results.length,0);
+});
+
+test('PA criteria come in 3 academic ranks from the school forms: seeded, converted to 60/40 points, and matched to the teacher rank',async()=>{
+ const env=await fixture();
+ const t=(await(await call(env,'templates')).json()).templates.filter(x=>x.kind==='pa'&&x.verified);
+ assert.deepEqual(t.map(x=>x.rubric.rank).sort(),['none','ชำนาญการ','ชำนาญการพิเศษ'].sort());
+ const rubric=t.find(x=>x.rubric.rank==='none').rubric;
+ assert.equal(rubric.items.length,18);
+ assert.equal(ballotResult(rubric,Object.fromEntries(rubric.items.map(i=>[i.id,4]))).total,100);
+ const r3=ballotResult(rubric,Object.fromEntries(rubric.items.map(i=>[i.id,3])));assert.equal(r3.total,75);assert.equal(r3.passed,true);
+ assert.notEqual(t.find(x=>x.rubric.rank==='ชำนาญการ').rubric.items[0].description,rubric.items[0].description);
+ env.raw.exec("UPDATE personnel_records SET academic_rank='ครูชำนาญการ' WHERE id=2");
+ const payload={personnel_id:2,title:'PA',fiscal_year:2569,cycle:1,start_date:'2025-10-01',end_date:'2026-09-30'};
+ assert.equal((await call(env,'cases','POST',{...payload,template_id:t.find(x=>x.rubric.rank==='none').id})).status,400);
+ const ok=await call(env,'cases','POST',{...payload,template_id:t.find(x=>x.rubric.rank==='ชำนาญการ').id});assert.equal(ok.status,201);
+ const id=(await ok.json()).id;
+ for(const user_id of [3,4,5])await call(env,`cases/${id}/assignments`,'POST',{user_id});
+ assert.equal((await call(env,`cases/${id}/open`,'POST',{})).status,200);
+ const d=await(await call(env,'cases/'+id,'GET',undefined,3)).json();const scores=Object.fromEntries(d.case.rubric.items.map(i=>[i.id,3]));
+ assert.equal((await call(env,`cases/${id}/ballot`,'PUT',{scores,revision:0,submit:true},3)).status,400); // ต้องเลือกภาระงาน
+ assert.equal((await call(env,`cases/${id}/ballot`,'PUT',{scores,extras:{workload:'met',strengths:'จุดเด่น',improvements:'ควรพัฒนา'},comment:'ข้อคิดเห็น',revision:0,submit:true},3)).status,200);
+ const mine=(await(await call(env,'cases/'+id,'GET',undefined,3)).json()).mine;
+ assert.deepEqual(mine.extras,{workload:'met',strengths:'จุดเด่น',improvements:'ควรพัฒนา'});
 });

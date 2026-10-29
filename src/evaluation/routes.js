@@ -3,7 +3,7 @@ import {getCurrentUser,jsonResponse,parseCookies} from '../lib/auth.js';
 import {ensureEvaluationSchema} from './schema.js';
 import {starterTemplates} from './templates.js';
 import {eligibleForEvaluation} from './eligibility.js';
-import {EvaluationError,requireValue,validateRubric,validateScores,summarize,ballotResult} from './scoring.js';
+import {EvaluationError,requireValue,validateRubric,validateScores,validateExtras,summarize,ballotResult,rankKey} from './scoring.js';
 export const EVALUATION_HOST='evaluate.banpadengschool.ac.th';
 const cookieName='__Host-bpd_evaluator',days7=604800;
 const response=(body,status=200,headers={})=>jsonResponse(body,status,{'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer',...headers});
@@ -39,11 +39,11 @@ async function audit(env,a,caseId,action,detail={}){
 }
 async function caseById(env,id){const row=await env.DB.prepare(`SELECT c.*,p.full_name,p.position,p.academic_rank,t.name AS template_name,t.kind,t.reference
  FROM evaluation_cases c JOIN personnel_records p ON p.id=c.personnel_id JOIN evaluation_templates t ON t.id=c.template_id WHERE c.id=?`).bind(id).first();requireValue(row,'ไม่พบการประเมิน',404);return row;}
-async function assignments(env,id){return (await env.DB.prepare(`SELECT a.*,COALESCE(u.full_name,a.guest_name) AS name,b.scores_json,b.comment,b.revision,b.submitted_at
+async function assignments(env,id){return (await env.DB.prepare(`SELECT a.*,COALESCE(u.full_name,a.guest_name) AS name,b.scores_json,b.extras_json,b.comment,b.revision,b.submitted_at
  FROM evaluation_assignments a LEFT JOIN users u ON u.id=a.user_id LEFT JOIN evaluation_ballots b ON b.assignment_id=a.id WHERE a.case_id=? ORDER BY a.id`).bind(id).all()).results;}
 async function owns(env,user,personId){return !!user&&!!await env.DB.prepare('SELECT 1 FROM personnel_accounts WHERE user_id=? AND personnel_id=?').bind(user.id,personId).first();}
 const assigned=(a,rows)=>rows.find(r=>a.guest?r.id===a.guest.id:r.user_id===a.user?.id);
-function safeAssignment(row,includeScores=false){const result={id:row.id,name:row.name,user_id:row.user_id,guest_org:row.guest_org,expires_at:row.expires_at,revoked_at:row.revoked_at,redeemed_at:row.redeemed_at,submitted_at:row.submitted_at,revision:row.revision??0};if(includeScores)Object.assign(result,{scores:JSON.parse(row.scores_json||'{}'),comment:row.comment||''});return result;}
+function safeAssignment(row,includeScores=false){const result={id:row.id,name:row.name,user_id:row.user_id,guest_org:row.guest_org,expires_at:row.expires_at,revoked_at:row.revoked_at,redeemed_at:row.redeemed_at,submitted_at:row.submitted_at,revision:row.revision??0};if(includeScores)Object.assign(result,{scores:JSON.parse(row.scores_json||'{}'),extras:JSON.parse(row.extras_json||'{}'),comment:row.comment||''});return result;}
 function safeCase(row){const {rubric_json,result_json,...c}=row;return {...c,rubric:JSON.parse(rubric_json),result:result_json?JSON.parse(result_json):null};}
 export async function handleEvaluationRoute(request,env,pathname,method){
  if(!pathname.startsWith('/api/evaluation/'))return null;
@@ -118,6 +118,8 @@ export async function handleEvaluationRoute(request,env,pathname,method){
    const person=await env.DB.prepare("SELECT id,position,academic_rank FROM personnel_records WHERE id=? AND status='active'").bind(personId).first();
    requireValue(person,'ไม่พบบุคลากร',404);
    requireValue(eligibleForEvaluation(person,template.kind),'ครูรายนี้ไม่เข้าเกณฑ์ตามประเภทการประเมินหรือวิทยฐานะปัจจุบัน',400);
+   const templateRank=JSON.parse(template.rubric_json).rank;
+   if(templateRank)requireValue(rankKey(person.academic_rank)===templateRank,'เกณฑ์ PA ไม่ตรงกับวิทยฐานะของครูรายนี้ในทะเบียนบุคลากร',400);
    requireValue(clean(b.title)&&Number.isInteger(b.fiscal_year)&&b.fiscal_year>=2500&&b.fiscal_year<=2800,'ชื่อรอบหรือปีงบประมาณไม่ถูกต้อง');
    requireValue(Number.isInteger(b.cycle)&&b.cycle>=1&&b.cycle<=4,'ครั้งที่ประเมินไม่ถูกต้อง');
    requireValue(date(b.start_date)&&date(b.end_date)&&b.start_date<=b.end_date,'ช่วงวันที่ประเมินไม่ถูกต้อง');
@@ -175,14 +177,14 @@ export async function handleEvaluationRoute(request,env,pathname,method){
    requireValue(mine&&live(mine),'ไม่ได้รับมอบหมายหรือสิทธิ์หมดอายุ',403);requireValue(!await owns(env,a.user,c.personnel_id),'ห้ามประเมินตนเอง',403);
    requireValue(c.state==='open','รอบยังไม่เปิดหรือยืนยันผลแล้ว',409);requireValue(!mine.submitted_at,'ส่งคะแนนแล้ว ต้องขอเปิดแก้ไข',409);
    const b=await input(request);requireValue(Number.isInteger(b.revision)&&b.revision===(mine.revision??0),'คะแนนถูกแก้จากหน้าต่างอื่น กรุณาโหลดใหม่',409);
-   requireValue(b.submit===undefined||typeof b.submit==='boolean','สถานะการส่งคะแนนไม่ถูกต้อง');validateScores(JSON.parse(c.rubric_json),b.scores,b.submit===true);
-   const r=await env.DB.prepare(`INSERT INTO evaluation_ballots(assignment_id,scores_json,comment,revision,submitted_at)
-   SELECT ?,?,?,1,CASE WHEN ?=1 THEN datetime('now') ELSE NULL END
+   requireValue(b.submit===undefined||typeof b.submit==='boolean','สถานะการส่งคะแนนไม่ถูกต้อง');const rubric=JSON.parse(c.rubric_json);validateScores(rubric,b.scores,b.submit===true);const extras=validateExtras(rubric,b.extras,b.submit===true);
+   const r=await env.DB.prepare(`INSERT INTO evaluation_ballots(assignment_id,scores_json,extras_json,comment,revision,submitted_at)
+   SELECT ?,?,?,?,1,CASE WHEN ?=1 THEN datetime('now') ELSE NULL END
    WHERE (SELECT state FROM evaluation_cases WHERE id=?)='open'
    AND EXISTS(SELECT 1 FROM evaluation_assignments x WHERE x.id=? AND x.revoked_at IS NULL AND (x.expires_at IS NULL OR x.expires_at>?))
-   ON CONFLICT(assignment_id) DO UPDATE SET scores_json=excluded.scores_json,comment=excluded.comment,revision=evaluation_ballots.revision+1,
+   ON CONFLICT(assignment_id) DO UPDATE SET scores_json=excluded.scores_json,extras_json=excluded.extras_json,comment=excluded.comment,revision=evaluation_ballots.revision+1,
    submitted_at=excluded.submitted_at,updated_at=datetime('now') WHERE evaluation_ballots.submitted_at IS NULL AND evaluation_ballots.revision=?`)
-   .bind(mine.id,JSON.stringify(b.scores),clean(b.comment,4000),b.submit?1:0,id,mine.id,now(),b.revision).run();requireValue(r.meta.changes===1,'คะแนนหรือสถานะรอบเปลี่ยน กรุณาโหลดใหม่',409);
+   .bind(mine.id,JSON.stringify(b.scores),JSON.stringify(extras),clean(b.comment,4000),b.submit?1:0,id,mine.id,now(),b.revision).run();requireValue(r.meta.changes===1,'คะแนนหรือสถานะรอบเปลี่ยน กรุณาโหลดใหม่',409);
    await audit(env,a,id,b.submit?'ballot_submitted':'ballot_saved',{assignment_id:mine.id,revision:b.revision+1});return response({ok:true,revision:b.revision+1});
   }
   if(action==='reopen'&&method==='POST'){

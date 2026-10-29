@@ -1,3 +1,4 @@
+import {paStarters} from './templates.js';
 // Owned by the evaluation module; never migrates unrelated school modules.
 export const EVALUATION_SCHEMA = [
 `CREATE TABLE IF NOT EXISTS evaluation_templates (
@@ -35,8 +36,23 @@ export const EVALUATION_SCHEMA = [
 `CREATE INDEX IF NOT EXISTS idx_evaluation_assignee ON evaluation_assignments(user_id,case_id)`
 ];
 const ready = new WeakMap();
+// คอลัมน์ที่เพิ่มภายหลัง: extras_json = ภาระงานตาม ก.ค.ศ. / จุดเด่น / จุดที่ควรพัฒนา ของกรรมการแต่ละคน
+async function addColumns(env){
+ const {results}=await env.DB.prepare("SELECT name FROM pragma_table_info('evaluation_ballots')").all();
+ if(!results.some(r=>r.name==='extras_json'))await env.DB.prepare("ALTER TABLE evaluation_ballots ADD COLUMN extras_json TEXT NOT NULL DEFAULT '{}'").run();
+}
+// เกณฑ์ PA 3 ระดับตามแบบประเมินของโรงเรียน ใช้แทนเกณฑ์ PA รุ่นเดิม (รุ่นเดิมเลิกใช้สร้างรอบใหม่ — รอบที่สร้างแล้วยังใช้เกณฑ์ที่ล็อกไว้)
+async function seedPaTemplates(env){
+ const {results}=await env.DB.prepare("SELECT name FROM evaluation_templates WHERE kind='pa'").all();
+ const have=new Set(results.map(r=>r.name)),missing=paStarters.filter(t=>!have.has(t.name));
+ if(!missing.length)return;
+ await env.DB.batch([
+  env.DB.prepare("UPDATE evaluation_templates SET verified=0 WHERE kind='pa' AND json_extract(rubric_json,'$.rank') IS NULL"),
+  ...missing.map(t=>env.DB.prepare('INSERT INTO evaluation_templates(name,kind,reference,rubric_json,verified) VALUES(?,?,?,?,1)').bind(t.name,t.kind,t.reference,JSON.stringify(t.rubric))),
+ ]);
+}
 export function ensureEvaluationSchema(env) {
  let promise=ready.get(env.DB);
- if(!promise){promise=env.DB.batch(EVALUATION_SCHEMA.map(sql=>env.DB.prepare(sql)));ready.set(env.DB,promise);promise.catch(()=>ready.delete(env.DB));}
+ if(!promise){promise=env.DB.batch(EVALUATION_SCHEMA.map(sql=>env.DB.prepare(sql))).then(()=>addColumns(env)).then(()=>seedPaTemplates(env));ready.set(env.DB,promise);promise.catch(()=>ready.delete(env.DB));}
  return promise;
 }
