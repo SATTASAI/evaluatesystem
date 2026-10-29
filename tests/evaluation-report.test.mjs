@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import {starterTemplates} from '../src/evaluation/templates.js';
@@ -19,5 +19,20 @@ test('PA and assistant reports generate actual PDFs with embedded Thai fonts and
   const buffer=await new Promise((resolve,reject)=>{try{pdfMake.createPdf(definition,undefined,fonts,vfs).getBuffer(resolve);}catch(error){reject(error);}});
   assert.equal(Buffer.from(buffer.subarray(0,5)).toString(),'%PDF-');
   const bytes=Buffer.from(buffer).toString('latin1');assert.match(bytes,/\/ToUnicode/);assert.match(bytes,/Sarabun/);assert.match(bytes,/%%EOF/);assert(buffer.byteLength>10000);
+ }
+});
+
+test('PA form PDF follows the school form for each academic rank (levels ticked, workload, strengths/improvements)',async()=>{
+ for(const starter of starterTemplates.filter(t=>t.kind==='pa')){
+  const rubric=starter.rubric,scores=Object.fromEntries(rubric.items.map((i,n)=>[i.id,1+n%4]));
+  const c={rubric,full_name:'ครูทดสอบ ใจดี',fiscal_year:2569,start_date:'2025-10-01',end_date:'2026-09-30',challenge:'พัฒนาการอ่าน',rank:''};
+  const member={name:'กรรมการทดสอบ',scores,extras:{workload:'met',strengths:'สอนดี',improvements:'เพิ่มสื่อ'},comment:'ดี'};
+  const definition=window.EvaluationReport.formDefinition(c,member);
+  const text=JSON.stringify(definition.content);
+  assert.match(text,new RegExp(rubric.rank_label.replace(/[()]/g,'.')));
+  assert.match(text,/รวมผลการประเมินทั้ง 2 ส่วน/);assert.match(text,/จุดที่ควรพัฒนา/);
+  const buffer=await new Promise((resolve,reject)=>{try{pdfMake.createPdf(definition,undefined,fonts,vfs).getBuffer(resolve);}catch(error){reject(error);}});
+  assert.equal(Buffer.from(buffer.subarray(0,5)).toString(),'%PDF-');
+  if(rubric.rank==='ชำนาญการ')writeFileSync(new URL('../.pa-form-sample.pdf',import.meta.url),Buffer.from(buffer));
  }
 });
