@@ -37,6 +37,21 @@ async function createCase(env,external=false){
 }
 async function submit(env,id,user,fill=.8){const d=await(await call(env,'cases/'+id,'GET',undefined,user)).json();const scores=Object.fromEntries(d.case.rubric.items.map(i=>[i.id,Math.max(i.min,i.max*fill)]));const r=await call(env,`cases/${id}/ballot`,'PUT',{scores,extras:{workload:'met'},revision:d.mine.revision,submit:true},user);assert.equal(r.status,200,await r.clone().text());return scores;}
 
+test('PA directory limits access and saves and removes photos for authorized managers',async()=>{
+ const env=await fixture(),photo='data:image/jpeg;base64,YWJj';
+ assert.equal((await call(env,'pa-directory','GET',undefined,null)).status,401);
+ assert.equal((await call(env,'pa-directory','GET',undefined,2)).status,403);
+ assert.equal((await call(env,'pa-directory/1/photo','PUT',{photo},5)).status,403);
+ assert.equal((await call(env,'pa-directory/999/photo','PUT',{photo},1)).status,404);
+ assert.equal((await call(env,'pa-directory/1/photo','PUT',{photo:'data:image/svg+xml;base64,YWJj'},1)).status,400);
+ assert.equal((await call(env,'pa-directory/1/photo','PUT',{photo},1)).status,200);
+ let teachers=(await(await call(env,'pa-directory','GET',undefined,5)).json()).teachers;
+ assert.equal(teachers.length,39);assert.equal(teachers[0].photo,photo);
+ assert.equal(teachers.filter(t=>!t.url).length,2);
+ assert.equal((await call(env,'pa-directory/1/photo','PUT',{photo:''},1)).status,200);
+ teachers=(await(await call(env,'pa-directory')).json()).teachers;assert.equal(teachers[0].photo,'');
+});
+
 test('permissions follow current roles and department heads; only personnel head/admin edit criteria',async()=>{
  const env=await fixture();for(const user of [1,3,4,5])assert.equal((await(await call(env,'permissions','GET',undefined,user)).json()).access,true);
  for(const user of [2,6]){assert.equal((await call(env,'cases','GET',undefined,user)).status,403);assert.equal((await call(env,'templates','POST',starterTemplates[0],user)).status,403);}

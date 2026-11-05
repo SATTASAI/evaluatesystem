@@ -1,6 +1,7 @@
 import {paStarters} from './templates.js';
 // Owned by the evaluation module; never migrates unrelated school modules.
 export const EVALUATION_SCHEMA = [
+`CREATE TABLE IF NOT EXISTS evaluation_pa_photos (teacher_id INTEGER PRIMARY KEY, image_data TEXT NOT NULL)`,
 `CREATE TABLE IF NOT EXISTS evaluation_templates (
  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('pa','assistant')),
  reference TEXT NOT NULL, rubric_json TEXT NOT NULL, verified INTEGER NOT NULL DEFAULT 0,

@@ -1,4 +1,5 @@
 import {evaluationPermissions} from './permissions.js';
+import {paDirectory} from './pa-directory-data.js';
 import {getCurrentUser,jsonResponse,parseCookies} from '../lib/auth.js';
 import {ensureEvaluationSchema} from './schema.js';
 import {starterTemplates} from './templates.js';
@@ -79,6 +80,20 @@ export async function handleEvaluationRoute(request,env,pathname,method){
    return response({results:rows.results.map(({result_json,...r})=>({...r,result:JSON.parse(result_json)})),can_evaluate:a.permissions.access});
   }
   requireAccess(a);
+  if(pathname==='/api/evaluation/pa-directory'&&method==='GET'){
+   requireValue(!a.guest,'ไม่มีสิทธิ์ดูรายชื่อทั้งหมด',403);
+   const photos=await env.DB.prepare('SELECT teacher_id,image_data FROM evaluation_pa_photos').all();
+   const images=new Map(photos.results.map(p=>[p.teacher_id,p.image_data]));
+   return response({teachers:paDirectory.map(p=>({...p,photo:images.get(p.id)||''}))});
+  }
+  const photoMatch=pathname.match(/^\/api\/evaluation\/pa-directory\/(\d+)\/photo$/);
+  if(photoMatch&&method==='PUT'){
+   requireManage(a);const id=idOf(photoMatch[1]);requireValue(paDirectory.some(p=>p.id===id),'ไม่พบครู',404);
+   const b=await input(request);requireValue(typeof b.photo==='string'&&(b.photo===''||/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(b.photo))&&b.photo.length<=100000,'รูปภาพไม่ถูกต้องหรือใหญ่เกินไป');
+   if(b.photo)await env.DB.prepare('INSERT INTO evaluation_pa_photos(teacher_id,image_data) VALUES(?,?) ON CONFLICT(teacher_id) DO UPDATE SET image_data=excluded.image_data').bind(id,b.photo).run();
+   else await env.DB.prepare('DELETE FROM evaluation_pa_photos WHERE teacher_id=?').bind(id).run();
+   return response({ok:true});
+  }
   if(pathname==='/api/evaluation/templates'&&method==='GET'){
    requireValue(!a.guest,'ไม่มีสิทธิ์ดูคลังเกณฑ์',403);
    const rows=await env.DB.prepare('SELECT * FROM evaluation_templates ORDER BY id DESC').all();
